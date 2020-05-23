@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "apiVersion": "1.0.0",
+  "author": "Tim Kostka <kostka@gmail.com>",
+  "description": "Saleae Logic 2.x high level analyzer for SD/MMC communication",
+  "name": "SDMMC (from SPI)",
+  "extensions": {
+    "SPI to SDIO": {
+      "type": "HighLevelAnalyzer",
+      "entryPoint": "sdmc_from_spi.SdmmcFromSpiAnalyzer"
+    }
+  }
+}

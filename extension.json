@@ -1,6 +1,6 @@
 {
   "name": "SDMMC from SPI",
-  "version": "20.7.2",
+  "version": "20.7.3",
   "author": "Tim Kostka <kostka@gmail.com>",
   "description": "Saleae Logic 2.x high level analyzer for SD/MMC communication",
   "apiVersion": "1.0.0",

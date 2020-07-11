@@ -16,7 +16,7 @@ As of the time of writing, the latest version was v2.3.2.
 
 2. In the "Extensions" tab, select "Create Extension" and select "Load existing extension."
 
-3. Select the "sdmmc_from_spi.json" file on your computer.
+3. Select the "extension.json" file on your computer.
 
 ### Create an SPI analyzer
 

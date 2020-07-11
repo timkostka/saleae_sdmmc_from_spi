@@ -1,7 +1,7 @@
 """
 High Level Analyzer script for interpreting SDMMC communication.
 
-This is used by Saleae Logic 2.x.
+This is supported by Saleae Logic v2.3.1 or later.
 
 For more information, see https://github.com/saleae/logic2-examples
 
@@ -11,7 +11,15 @@ and use that channel as the input for this analyzer.
 This analyzer will only decode the CMD signal.  The data signal(s) are not
 monitored.
 
+Author: Tim Kostka <kostka@gmail.com>
+Website: https://github.com/timkostka/saleae_sdmmc_from_spi
+
 """
+
+
+from saleae.data.timing import GraphTimeDelta
+from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame
+
 
 # states (CURRENT_STATE)
 CURRENT_STATE = {
@@ -252,10 +260,7 @@ class SdioState:
         self.expected_response = None
         # bits in the expected response
         self.expected_response_length = 48
-        # bits discarded waiting for a command or response
-        # self.bits_discarded = 0
         print("\n\n\n\n\n")
-        pass
 
     def add_byte(self, value, start_time, end_time):
         """
@@ -265,17 +270,17 @@ class SdioState:
         end is the end time of the byte
 
         """
+        if isinstance(value, bytes):
+            assert len(value) == 1
+            value = value[0]
+        assert isinstance(value, int)
         # if bus is idle, ignore value
         if value == 255 and not self.command_bits:
-            # self.bits_discarded += 8
-            # if self.bits_discarded > 20:
-            #     self.expected_response = None
-            #     self.expected_response_length = 48
             return None
         if not self.first_time:
             self.first_time = start_time
         new_bits = bits_from_byte(value)
-        bit_length = (end_time - start_time) / 7.5
+        bit_length = GraphTimeDelta(float(end_time - start_time) / 7.5)
         # self.debug = "t %s to %s" % (start_time, end_time)
         self.debug = "start_time:%s, end_time:%s" % (start_time, end_time)
         # if we're expecting a response, look for one
@@ -288,9 +293,8 @@ class SdioState:
             count = 0
             while new_bits[0]:
                 count += 1
-                # self.bits_discarded += 1
                 del new_bits[0]
-            self.command_start = start_time + count * bit_length
+            self.command_start = start_time + GraphTimeDelta(count * float(bit_length))
             self.command_bits = new_bits
             return None
         # add bits to command
@@ -303,9 +307,9 @@ class SdioState:
         this_response_type = self.expected_response
         # get end time of this
         command_start = self.command_start
-        command_end = end_time - bit_length * (
+        command_end = end_time - GraphTimeDelta(float(bit_length) * (
             len(self.command_bits) - this_response_length
-        )
+        ))
         bits = self.command_bits[:this_response_length]
         print("\n")
         print("".join("1" if x else "0" for x in bits))
@@ -337,16 +341,14 @@ class SdioState:
         if all(x for x in self.command_bits):
             self.command_bits = None
         else:
-            # self.bits_discarded = 0
             while self.command_bits[0]:
                 del self.command_bits[0]
-                # self.bits_discarded += 1
             self.command_start = end_time
-            self.command_start -= bit_length * (len(self.command_bits) - 0.5)
+            self.command_start -= GraphTimeDelta(float(bit_length) * (len(self.command_bits) - 0.5))
             print("new command bits =", self.command_bits)
         print(info)
         print(
-            "start=%g, duration=%g"
+            "start=%s, duration=%s"
             % (command_start, command_end - command_start)
         )
         data = {
@@ -357,44 +359,24 @@ class SdioState:
         return data
 
 
-class SdmmcFromSpiAnalyzer:
+class SdmmcFromSpiAnalyzer(HighLevelAnalyzer):
+
+    result_types = {
+        "error": {"format": "ERROR"},
+        "sdio": {"format": "{{data.info}}"},
+    }
+
     def __init__(self):
         self.state = SdioState()
 
-    def get_capabilities(self):
-        return None
-        return {
-            "settings": {
-                "My String Setting": {"type": "string"},
-                "My Number Setting": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 100,
-                },
-                "My Choices Setting": {
-                    "type": "choices",
-                    "choices": ("A", "B"),
-                },
-            }
-        }
-
-    def set_settings(self, settings):
-        return {
-            "result_types": {
-                "error": {"format": "ERROR"},
-                "sdio": {"format": "{{data.info}}"},
-            }
-        }
-
     def decode(self, data):
         info = self.state.add_byte(
-            data["data"]["mosi"], data["start_time"], data["end_time"]
+            data.data["mosi"], data.start_time, data.end_time
         )
         if info:
-            new_data = {
-                "type": "sdio",
-                "start_time": info["start_time"],
-                "end_time": info["end_time"],
-                "data": {"info": info["info"]},
-            }
-            return new_data
+            return AnalyzerFrame(
+                'mytype',
+                info["start_time"],
+                info["end_time"],
+                {"info": info["info"]}
+            )

@@ -375,7 +375,7 @@ class SdmmcFromSpiAnalyzer(HighLevelAnalyzer):
         )
         if info:
             return AnalyzerFrame(
-                'mytype',
+                'sdio',
                 info["start_time"],
                 info["end_time"],
                 {"info": info["info"]}

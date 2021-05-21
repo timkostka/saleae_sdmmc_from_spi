@@ -370,6 +370,8 @@ class SdmmcFromSpiAnalyzer(HighLevelAnalyzer):
         self.state = SdioState()
 
     def decode(self, data):
+        if not "mosi" in data.data:
+            return
         info = self.state.add_byte(
             data.data["mosi"], data.start_time, data.end_time
         )

@@ -2,6 +2,8 @@
 
 This is a high-level analyzer (HLA) for decoding SD and MMC comminication with a Saleae logic analyzer.
 
+The analyzer only works when using SD mode (CK/CMD/DATx) and is not compatible with communication in SPI mode.
+
 ## Setup
 
 To use this extension, do the following:
@@ -24,7 +26,7 @@ As of the time of writing, the latest version was v2.3.2.
   
 2. MISO unmapped
   
-3. Clock mapped to SDIO/CK
+3. Clock mapped to SDIO_CK
 
 4. Enable unmapped (important)
   

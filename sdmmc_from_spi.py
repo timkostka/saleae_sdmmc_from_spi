@@ -91,7 +91,8 @@ COMMAND_INFO = {
     55: ("APP_CMD", 1),
     56: ("GEN_CMD", 1),
     # Security Protocols (class 1None)
-    53: ("PROTOCOL_RD", 1),
+    52: ("IO_RW_DIRECT", 5),
+    53: ("IO_RW_EXTENDED", 5),
     54: ("PROTOCOL_WR", 1),
     # Command Queues (class 11)
     44: ("QUEUED_TASK_PARAMS", 1),
@@ -136,7 +137,7 @@ def value_from_bits(bits):
     return value
 
 
-def interpret_command(bits):
+def interpret_command(self, bits):
     """Return a string description from the command bits."""
     assert len(bits) == 48
     okay = True
@@ -152,7 +153,55 @@ def interpret_command(bits):
         info = get_command_name(command_index) + " (CMD%d)" % command_index
     else:
         info = "CMD%d" % command_index
-    info += ", arg:%d" % argument
+    if command_index == 52:
+        #Argument start at position 8
+        rw_flag = bits[8]
+        function = value_from_bits(bits[9:12])
+        raw_flag = bits[12]
+        reg_address = value_from_bits(bits[14:31])
+        if rw_flag == 1:
+            write_data = value_from_bits(bits[32:40])
+            info += ": Write: %d" % write_data
+        else:
+            info += ": Read"
+        info += " Func%d" % function
+        info += ", Address 0x%x" % reg_address
+    elif command_index == 53:
+        rw_flag = bits[8]
+        function = value_from_bits(bits[9:12])
+        block_mode = bits[12]
+        op_code = bits[13]
+        reg_address = value_from_bits(bits[14:31])
+        byte_block_cnt = value_from_bits(bits[31:40])
+        if rw_flag == 1:
+            info += ": Write" 
+        else:
+            info += ": Read"
+        info += " Func%d" % function
+        if op_code == 1:
+            info += ", Inc Address 0x%x" % reg_address
+        else:
+            info += ", Fix Address 0x%x" % reg_address
+        if block_mode == 1:
+            info += ", BlockMode:"
+            info += " %d blocks" % byte_block_cnt
+            
+            # number of bytes to skip from to log, data block + CRC
+            self.cdm53_skip_next_bytes = self.cdm53_block_size_length + 2
+            # number of blocks to read/write, and reset received ones
+            self.cmd53_blocks_pending = byte_block_cnt
+            self.cmd53_blocks_received = 0
+        else:
+            info += ", ByteMode:"
+            info += " %d bytes" % byte_block_cnt
+
+            # number of bytes to skip from to log, received in the command + CRC
+            self.cdm53_skip_next_bytes = byte_block_cnt + 2
+            # number of blocks to read/write
+            self.cmd53_blocks_pending = 1 #byte mode, only 1 block always, and reset received ones
+            self.cmd53_blocks_received = 0
+    else:    
+        info += ", arg:%d" % argument
     if not okay:
         info += ", ERROR"
     return info
@@ -245,6 +294,10 @@ def interpret_response3(bits):
     info = "R3, %s" % ("READY" if ocr_register[0] else "BUSY")
     return info
 
+def interpret_response5(bits):
+    """Return a string description from the response 3 bits."""
+    info = "R5"
+    return info
 
 class SdioState:
     def __init__(self):
@@ -260,6 +313,18 @@ class SdioState:
         self.expected_response = None
         # bits in the expected response
         self.expected_response_length = 48
+        # configuration of the block length during CMD53
+        self.cdm53_block_size_length = 256
+        # number of bytes pending to skip from the CMD53 block transmission
+        self.cdm53_skip_next_bytes = 0
+        # number of blocks pending to transmit in multiblock requests
+        self.cmd53_blocks_pending = 0
+        # flag to know when block has started
+        self.cmd53_start_token_received = 0
+        # start_time of the block data
+        self.cmd53_data_start = None
+        # number of blocks already received, just for printf
+        self.cmd53_blocks_received = 0
         print("\n\n\n\n\n")
 
     def add_byte(self, value, start_time, end_time):
@@ -274,6 +339,58 @@ class SdioState:
             assert len(value) == 1
             value = value[0]
         assert isinstance(value, int)
+        
+        ################### CMD53 handling #########################
+        # Is CMD53 block received and data processing pending?
+        if (self.cdm53_skip_next_bytes > 0):
+            # Is Start Block Token recevied?
+            if (self.cmd53_start_token_received == 0):
+                if ((value == 0xFC) or (value == 0xFD)):
+                    self.cmd53_start_token_received = 1
+                    #data = {
+                    #    "start_time": start_time,
+                    #    "end_time": end_time,
+                    #    "info": "START_TOKEN",
+                    #}
+                    #return data
+                    print("---> START_TOKEN CMD53")
+                    self.cmd53_data_start = end_time
+                    return None
+                else:
+                    return None
+            else:
+                # Start Token already received, let's skipt the bytes, part of CMD53 write data
+                if self.cdm53_skip_next_bytes > 1:
+                    self.cdm53_skip_next_bytes -= 1
+                    return None
+                else:
+                    #last byte of the block received, check for blocks
+                    self.cmd53_blocks_pending -= 1
+                    self.cmd53_blocks_received += 1
+                    info = "DATA BLOCK %d" % self.cmd53_blocks_received
+                    if self.cmd53_blocks_pending == 0:
+                        #CMD53 finished...
+                        self.cdm53_skip_next_bytes = 0
+                        self.cmd53_start_token_received = 0
+                        print("---> END CMD53")
+                        data = {
+                            "start_time": self.cmd53_data_start,
+                            "end_time": end_time,
+                            "info": info,
+                        }
+                        return data
+                    else:
+                        #prepare to receve next block
+                        self.cdm53_skip_next_bytes = self.cdm53_block_size_length + 2
+                        self.cmd53_start_token_received = 0
+                        print("---> END BLOCK")
+                        data = {
+                            "start_time": self.cmd53_data_start,
+                            "end_time": end_time,
+                            "info": info,
+                        }
+                        return data
+
         # if bus is idle, ignore value
         if value == 255 and not self.command_bits:
             return None
@@ -316,7 +433,7 @@ class SdioState:
         # determine if response or command
         transmission_bit = bits[1]
         if transmission_bit:
-            info = interpret_command(bits)
+            info = interpret_command(self,bits)
             command_index = value_from_bits(bits[2:8])
             # if a command, set up the next expected response
             self.expected_response = get_command_response(command_index)
@@ -330,6 +447,8 @@ class SdioState:
                 info = interpret_response2(bits)
             elif this_response_type == 3:
                 info = interpret_response3(bits)
+            elif this_response_type == 5:
+                info = interpret_response5(bits)
             else:
                 print("Unknown response type")
                 info = "R%s" % this_response_type
